@@ -26,6 +26,10 @@ app.get("/", (req, res) => {
 // API routes
 app.use("/api", ecommerceRoutes);
 
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
+
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
