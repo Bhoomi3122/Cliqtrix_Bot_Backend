@@ -7,85 +7,133 @@ import { ecommerceManager } from "../services/ecommerceManager.js";
 const router = express.Router();
 
 /**
- * POST /api/track-order
- * Body: { orderNumber?, email?, visitorId?, message? }
+ * Helper to normalize incoming order ID
  */
+const normalizeIncomingOrderId = (v) => {
+  if (!v && v !== 0) return null;
+  try {
+    return String(v).trim();
+  } catch {
+    return null;
+  }
+};
+
+/* -------------------------------------------------------------
+   TRACK ORDER
+------------------------------------------------------------- */
 router.post("/track-order", async (req, res) => {
   try {
-    const {
-      orderNumber,
-      order_id,   // support alternate field from bot
-      email,
-      visitorId,
-      message
-    } = req.body;
+    const { orderNumber, order_id, email, visitorId, message } = req.body;
 
-    const orderNo = orderNumber || order_id || null;
+    const orderNo = normalizeIncomingOrderId(orderNumber || order_id);
+
+    if (!email && !orderNo) {
+      return res.json({
+        success: false,
+        botMessage:
+          "Please provide either the email used at checkout or the Order ID (e.g., #1003)."
+      });
+    }
 
     const order = await ecommerceManager.findOrder({ orderNumber: orderNo, email });
     const summary = ecommerceManager.getOrderSummary(order);
-    const ai = await analyzeSentimentAndIntent(message);
 
-    await Event.create({
-      visitorId,
-      email,
-      eventType: "TRACK_ORDER",
-      metadata: { orderNumber: orderNo, email, summary },
-      sentiment: ai.sentiment,
-      aiNotes: ai.recommendation
-    });
+    let ai = { sentiment: "neutral", recommendation: "" };
+    try {
+      ai = await analyzeSentimentAndIntent(message);
+    } catch {}
+
+    try {
+      await Event.create({
+        visitorId,
+        email,
+        eventType: "TRACK_ORDER",
+        metadata: { orderNumber: orderNo, found: !!order, summary },
+        sentiment: ai.sentiment,
+        aiNotes: ai.recommendation
+      });
+    } catch (err) {
+      console.error("Event create warn:", err.message);
+    }
 
     if (!order || !summary) {
       return res.json({
         success: false,
-        botMessage: "I couldn't find any order with those details. Please double-check your email or order number."
+        botMessage:
+          "I couldn't find any order with those details. Please double-check your email or order number."
       });
     }
 
     return res.json({
       success: true,
-      botMessage: `Got it! Here are the details for ${summary.orderNumber}.`,
+      botMessage: `Here are the details for order ${summary.orderNumber}.`,
       data: summary
     });
-  } catch (e) {
-    console.error("track-order error:", e);
-    return res.status(500).json({ success: false, error: e.message });
+  } catch (err) {
+    console.error("track-order error:", err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * POST /api/return-order
- * Body: { orderNumber?, email?, visitorId?, message? }
- */
+/* -------------------------------------------------------------
+   RETURN ORDER
+------------------------------------------------------------- */
 router.post("/return-order", async (req, res) => {
   try {
-    const {
-      orderNumber,
-      order_id,
-      email,
-      visitorId,
-      message
-    } = req.body;
+    const { orderNumber, order_id, email, visitorId, message } = req.body;
 
-    const orderNo = orderNumber || order_id || null;
+    const orderNo = normalizeIncomingOrderId(orderNumber || order_id);
+
+    if (!email && !orderNo) {
+      return res.json({
+        success: false,
+        botMessage:
+          "Please provide the email used at checkout or the Order ID so I can check return eligibility."
+      });
+    }
 
     const order = await ecommerceManager.findOrder({ orderNumber: orderNo, email });
-    const eligibility = ecommerceManager.checkReturnEligibility(order);
-    const ai = await analyzeSentimentAndIntent(message);
 
-    await Event.create({
-      visitorId,
-      email,
-      eventType: "RETURN_ORDER",
-      metadata: { orderNumber: orderNo, eligibility },
-      sentiment: ai.sentiment,
-      aiNotes: ai.recommendation
-    });
+    let ai = { sentiment: "neutral", recommendation: "" };
+    try {
+      ai = await analyzeSentimentAndIntent(message);
+    } catch {}
+
+    if (!order) {
+      try {
+        await Event.create({
+          visitorId,
+          email,
+          eventType: "RETURN_ORDER",
+          metadata: { orderNumber: orderNo, found: false },
+          sentiment: ai.sentiment,
+          aiNotes: ai.recommendation
+        });
+      } catch {}
+
+      return res.json({
+        success: false,
+        botMessage: "No matching order found. Please re-check the email or order ID."
+      });
+    }
+
+    const eligibility = ecommerceManager.checkReturnEligibility(order);
+
+    try {
+      await Event.create({
+        visitorId,
+        email,
+        eventType: "RETURN_ORDER",
+        metadata: { orderNumber: orderNo, found: true, eligibility },
+        sentiment: ai.sentiment,
+        aiNotes: ai.recommendation
+      });
+    } catch {}
 
     if (!eligibility.eligible) {
       return res.json({
         success: false,
-        botMessage: `Sorry, this order can't be returned: ${eligibility.reason}`,
+        botMessage: `Return not allowed: ${eligibility.reason}`,
         data: eligibility
       });
     }
@@ -97,42 +145,148 @@ router.post("/return-order", async (req, res) => {
       botMessage: result.message,
       data: result
     });
-  } catch (e) {
-    console.error("return-order error:", e);
-    return res.status(500).json({ success: false, error: e.message });
+  } catch (err) {
+    console.error("return-order error:", err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
-/**
- * POST /api/check-stock
- * Body: { variantId?, productId?, visitorId?, email?, message? }
- */
+/* -------------------------------------------------------------
+   CANCEL ORDER
+   (New: cancel + refund workflow)
+------------------------------------------------------------- */
+router.post("/cancel-order", async (req, res) => {
+  try {
+    const { orderNumber, order_id, email, visitorId, message } = req.body;
+
+    const orderNo = normalizeIncomingOrderId(orderNumber || order_id);
+
+    if (!email && !orderNo) {
+      return res.json({
+        success: false,
+        botMessage:
+          "Please provide the email used at checkout or the Order ID so I can check cancellation eligibility."
+      });
+    }
+
+    const order = await ecommerceManager.findOrder({ orderNumber: orderNo, email });
+
+    let ai = { sentiment: "neutral", recommendation: "" };
+    try {
+      ai = await analyzeSentimentAndIntent(message);
+    } catch {}
+
+    if (!order) {
+      try {
+        await Event.create({
+          visitorId,
+          email,
+          eventType: "CANCEL_ORDER",
+          metadata: { orderNumber: orderNo, found: false },
+          sentiment: ai.sentiment,
+          aiNotes: ai.recommendation
+        });
+      } catch {}
+
+      return res.json({
+        success: false,
+        botMessage: "No order found with these details. Please re-check the email or order ID."
+      });
+    }
+
+    const eligibility = ecommerceManager.checkCancelEligibility(order);
+
+    try {
+      await Event.create({
+        visitorId,
+        email,
+        eventType: "CANCEL_ORDER",
+        metadata: { orderNumber: orderNo, found: true, eligibility },
+        sentiment: ai.sentiment,
+        aiNotes: ai.recommendation
+      });
+    } catch {}
+
+    if (!eligibility.eligible) {
+      return res.json({
+        success: false,
+        botMessage: `Cancellation not allowed: ${eligibility.reason}`,
+        data: eligibility
+      });
+    }
+
+    const result = await ecommerceManager.cancelAndRefund(order);
+
+    return res.json({
+      success: result.success,
+      botMessage: result.message,
+      data: result
+    });
+  } catch (err) {
+    console.error("cancel-order error:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/* -------------------------------------------------------------
+   CHECK STOCK
+------------------------------------------------------------- */
 router.post("/check-stock", async (req, res) => {
   try {
-    const { variantId, productId, visitorId, email, message } = req.body;
+    const { variantId, productId, product_name, visitorId, email, message } = req.body;
+
+    if (!variantId && !productId && !product_name) {
+      return res.json({
+        success: false,
+        botMessage:
+          "Please provide a variant ID or product ID. Name-only stock checks are not supported."
+      });
+    }
+
+    if (!variantId && product_name && !productId) {
+      return res.json({
+        success: false,
+        botMessage:
+          "To check stock, I need a variant ID or product ID (e.g., 395534453)."
+      });
+    }
 
     const stock = await ecommerceManager.checkStock({ variantId, productId });
-    const ai = await analyzeSentimentAndIntent(message);
 
-    await Event.create({
-      visitorId,
-      email,
-      eventType: "STOCK_CHECK",
-      metadata: { variantId, productId, stock },
-      sentiment: ai.sentiment,
-      aiNotes: ai.recommendation
-    });
+    let ai = { sentiment: "neutral", recommendation: "" };
+    try {
+      ai = await analyzeSentimentAndIntent(message);
+    } catch {}
+
+    try {
+      await Event.create({
+        visitorId,
+        email,
+        eventType: "STOCK_CHECK",
+        metadata: { variantId, productId, product_name, stock },
+        sentiment: ai.sentiment,
+        aiNotes: ai.recommendation
+      });
+    } catch {}
+
+    if (!stock) {
+      return res.json({
+        success: false,
+        botMessage: "Unable to fetch stock details at the moment.",
+        data: null
+      });
+    }
 
     return res.json({
       success: true,
       botMessage: stock.inStock
         ? `Good news! This item is in stock (${stock.quantity} units).`
-        : "Currently out of stock. You can try a different variant or check back later.",
+        : "Currently out of stock.",
       data: stock
     });
-  } catch (e) {
-    console.error("check-stock error:", e);
-    return res.status(500).json({ success: false, error: e.message });
+  } catch (err) {
+    console.error("check-stock error:", err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 

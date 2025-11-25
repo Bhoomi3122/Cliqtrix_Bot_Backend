@@ -4,7 +4,8 @@ import Groq from "groq-sdk";
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export const analyzeSentimentAndIntent = async (message) => {
-  if (!message) {
+  // No user message → neutral, general
+  if (!message || !String(message).trim()) {
     return {
       sentiment: "neutral",
       intent: "general",
@@ -12,52 +13,60 @@ export const analyzeSentimentAndIntent = async (message) => {
     };
   }
 
-  try {
-    const prompt = `
-You are an AI assistant analyzing customer chat messages.
-Extract THREE things only:
+  const prompt = `
+You are an assistant analyzing a customer chat message.
 
-1. sentiment → "positive", "neutral", or "negative"
-2. intent → one of ["track_order", "return_order", "stock_check", "general"]
-3. recommendation → ONE helpful suggestion for the operator
+Extract ONLY this JSON:
+
+{
+  "sentiment": "positive | neutral | negative",
+  "intent": "track_order | return_order | cancel_order | stock_check | general",
+  "recommendation": "one short helpful suggestion for the support agent"
+}
+
+Rules:
+- Output ONLY valid JSON.
+- No explanations.
+- No extra text.
 
 Message: "${message}"
-
-Output JSON only, like this:
-{
-  "sentiment": "",
-  "intent": "",
-  "recommendation": ""
-}
 `;
 
+  try {
     const response = await groq.chat.completions.create({
       model: "llama3-8b-8192",
       messages: [{ role: "user", content: prompt }],
       temperature: 0
     });
 
-    let text = response.choices[0]?.message?.content || "{}";
-    let json;
+    let raw = response.choices?.[0]?.message?.content || "{}";
 
+    // Attempt to parse JSON normally
     try {
-      json = JSON.parse(text);
-    } catch {
-      json = {
-        sentiment: "neutral",
-        intent: "general",
-        recommendation: "Be polite and assist the user."
-      };
-    }
+      return JSON.parse(raw);
+    } catch {}
 
+    // Fallback: extract JSON using regex
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) return JSON.parse(match[0]);
+    } catch {}
 
-    return json;
-  } catch (err) {
-    console.error("Groq AI error:", err.message);
+    // Final fallback if parsing fails
     return {
       sentiment: "neutral",
       intent: "general",
-      recommendation: "AI unavailable. Follow normal support tone."
+      recommendation: "Assist the user based on their query."
+    };
+
+  } catch (err) {
+    console.error("Groq AI error:", err.message);
+
+    // AI completely unavailable
+    return {
+      sentiment: "neutral",
+      intent: "general",
+      recommendation: "AI unavailable. Respond politely based on the user's question."
     };
   }
 };

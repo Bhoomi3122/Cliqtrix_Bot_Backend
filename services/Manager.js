@@ -8,14 +8,23 @@ let impl;
 if (platform === "shopify") {
   impl = shopify;
 } else {
-  // You can later plug WooCommerce/Magento here
+  // Future: plug WooCommerce / Magento here
   throw new Error(`Platform '${platform}' not implemented`);
 }
 
 export const ecommerceManager = {
+  // Order lookup
   findOrder: impl.findOrder,
   getOrderSummary: impl.getOrderSummary,
+
+  // Returns
   checkReturnEligibility: impl.checkReturnEligibility,
   processReturn: impl.processReturn,
-  checkStock: impl.checkStock
+
+  // Stock
+  checkStock: impl.checkStock,
+
+  // NEW — Cancellation flow
+  checkCancelEligibility: impl.checkCancelEligibility,
+  cancelAndRefund: impl.cancelAndRefund
 };
