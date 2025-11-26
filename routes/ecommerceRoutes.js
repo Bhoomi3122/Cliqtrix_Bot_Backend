@@ -22,6 +22,8 @@ const normalizeIncomingOrderId = (v) => {
    TRACK ORDER
 ------------------------------------------------------------- */
 router.post("/track-order", async (req, res) => {
+  console.log("RAW BODY RECEIVED:", req.body);
+
   try {
     const { orderNumber, order_id, email, visitorId, message } = req.body;
 
@@ -79,6 +81,8 @@ router.post("/track-order", async (req, res) => {
    RETURN ORDER
 ------------------------------------------------------------- */
 router.post("/return-order", async (req, res) => {
+  console.log("RAW BODY RECEIVED:", req.body);
+
   try {
     const { orderNumber, order_id, email, visitorId, message } = req.body;
 
@@ -156,6 +160,8 @@ router.post("/return-order", async (req, res) => {
    (New: cancel + refund workflow)
 ------------------------------------------------------------- */
 router.post("/cancel-order", async (req, res) => {
+  console.log("RAW BODY RECEIVED:", req.body);
+
   try {
     const { orderNumber, order_id, email, visitorId, message } = req.body;
 
@@ -232,6 +238,8 @@ router.post("/cancel-order", async (req, res) => {
    CHECK STOCK
 ------------------------------------------------------------- */
 router.post("/check-stock", async (req, res) => {
+  console.log("RAW BODY RECEIVED:", req.body);
+
   try {
     const { variantId, productId, product_name, visitorId, email, message } = req.body;
 
