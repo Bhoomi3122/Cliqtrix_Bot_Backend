@@ -1,5 +1,5 @@
 // services/ecommerceManager.js
-import * as shopify from "../adapters/shopify/shopifyService.js";
+import * as shopify from "../adapters/shopify/shopifyServices.js";
 
 const platform = process.env.ECOM_PLATFORM || "shopify";
 

@@ -35,6 +35,7 @@ app.use(morgan("dev"));
 // Connect Database
 // -------------------------------------------------------------
 connectDB();
+console.log("Loaded key:", process.env.GROQ_API_KEY ? "YES" : "NO");
 
 // -------------------------------------------------------------
 // Health endpoints

@@ -2,7 +2,7 @@
 import express from "express";
 import { Event } from "../models/Event.js";
 import { analyzeSentimentAndIntent } from "../services/aiService.js";
-import { ecommerceManager } from "../services/ecommerceManager.js";
+import { ecommerceManager } from "../services/Manager.js";
 
 const router = express.Router();
 
